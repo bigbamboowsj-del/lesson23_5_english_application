@@ -83,42 +83,79 @@ def play_wav(audio_output_file_path, speed=1.0):
         speed: 再生速度（1.0が通常速度、0.5で半分の速さ、2.0で倍速など）
     """
 
-    # 音声ファイルの読み込み
-    audio = AudioSegment.from_wav(audio_output_file_path)
+    try:
+        # 音声ファイルの読み込み
+        audio = AudioSegment.from_wav(audio_output_file_path)
+        
+        # 速度を変更
+        if speed != 1.0:
+            # frame_rateを変更することで速度を調整
+            modified_audio = audio._spawn(
+                audio.raw_data, 
+                overrides={"frame_rate": int(audio.frame_rate * speed)}
+            )
+            # 元のframe_rateに戻すことで正常再生させる（ピッチを保持したまま速度だけ変更）
+            modified_audio = modified_audio.set_frame_rate(audio.frame_rate)
+
+            modified_audio.export(audio_output_file_path, format="wav")
+
+        # PyAudioで再生
+        p = None
+        stream = None
+        try:
+            with wave.open(audio_output_file_path, 'rb') as play_target_file:
+                # PyAudioの初期化（エラーハンドリング付き）
+                p = pyaudio.PyAudio()
+                
+                # ストリームを開く際のパラメータを明示的に設定
+                stream = p.open(
+                    format=p.get_format_from_width(play_target_file.getsampwidth()),
+                    channels=play_target_file.getnchannels(),
+                    rate=play_target_file.getframerate(),
+                    output=True,
+                    frames_per_buffer=1024  # バッファサイズを明示的に指定
+                )
+
+                # 音声データを読み込んで再生
+                data = play_target_file.readframes(1024)
+                while data:
+                    stream.write(data)
+                    data = play_target_file.readframes(1024)
+
+        except Exception as e:
+            st.error(f"音声再生中にエラーが発生しました: {str(e)}")
+            # Streamlitの代替音声再生機能を使用
+            st.audio(audio_output_file_path, format='audio/wav')
+            
+        finally:
+            # リソースの適切な解放
+            if stream is not None:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except:
+                    pass
+            if p is not None:
+                try:
+                    p.terminate()
+                except:
+                    pass
+        
+    except Exception as e:
+        st.error(f"音声ファイルの処理中にエラーが発生しました: {str(e)}")
+        # エラーが発生した場合でもStreamlitの音声プレイヤーで再生を試行
+        try:
+            st.audio(audio_output_file_path, format='audio/wav')
+        except:
+            st.error("音声の再生ができませんでした。")
     
-    # 速度を変更
-    if speed != 1.0:
-        # frame_rateを変更することで速度を調整
-        modified_audio = audio._spawn(
-            audio.raw_data, 
-            overrides={"frame_rate": int(audio.frame_rate * speed)}
-        )
-        # 元のframe_rateに戻すことで正常再生させる（ピッチを保持したまま速度だけ変更）
-        modified_audio = modified_audio.set_frame_rate(audio.frame_rate)
-
-        modified_audio.export(audio_output_file_path, format="wav")
-
-    # PyAudioで再生
-    with wave.open(audio_output_file_path, 'rb') as play_target_file:
-        p = pyaudio.PyAudio()
-        stream = p.open(
-            format=p.get_format_from_width(play_target_file.getsampwidth()),
-            channels=play_target_file.getnchannels(),
-            rate=play_target_file.getframerate(),
-            output=True
-        )
-
-        data = play_target_file.readframes(1024)
-        while data:
-            stream.write(data)
-            data = play_target_file.readframes(1024)
-
-        stream.stop_stream()
-        stream.close()
-        p.terminate()
-    
-    # LLMからの回答の音声ファイルを削除
-    os.remove(audio_output_file_path)
+    finally:
+        # LLMからの回答の音声ファイルを削除
+        try:
+            if os.path.exists(audio_output_file_path):
+                os.remove(audio_output_file_path)
+        except:
+            pass
 
 def create_chain(system_template):
     """
