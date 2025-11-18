@@ -99,36 +99,46 @@ def play_wav(audio_output_file_path, speed=1.0):
 
             modified_audio.export(audio_output_file_path, format="wav")
 
-        # PyAudioで再生
+        # 音声デバイスの存在確認とPyAudioでの再生試行
+        audio_device_available = False
         p = None
         stream = None
+        
         try:
-            with wave.open(audio_output_file_path, 'rb') as play_target_file:
-                # PyAudioの初期化（エラーハンドリング付き）
-                p = pyaudio.PyAudio()
-                
-                # ストリームを開く際のパラメータを明示的に設定
-                stream = p.open(
-                    format=p.get_format_from_width(play_target_file.getsampwidth()),
-                    channels=play_target_file.getnchannels(),
-                    rate=play_target_file.getframerate(),
-                    output=True,
-                    frames_per_buffer=1024  # バッファサイズを明示的に指定
-                )
+            # PyAudioの初期化を試行
+            p = pyaudio.PyAudio()
+            
+            # 出力デバイスの存在確認
+            device_count = p.get_device_count()
+            for i in range(device_count):
+                device_info = p.get_device_info_by_index(i)
+                if device_info['maxOutputChannels'] > 0:
+                    audio_device_available = True
+                    break
+            
+            if audio_device_available:
+                # 音声デバイスが利用可能な場合、PyAudioで再生
+                with wave.open(audio_output_file_path, 'rb') as play_target_file:
+                    stream = p.open(
+                        format=p.get_format_from_width(play_target_file.getsampwidth()),
+                        channels=play_target_file.getnchannels(),
+                        rate=play_target_file.getframerate(),
+                        output=True,
+                        frames_per_buffer=1024
+                    )
 
-                # 音声データを読み込んで再生
-                data = play_target_file.readframes(1024)
-                while data:
-                    stream.write(data)
+                    # 音声データを読み込んで再生
                     data = play_target_file.readframes(1024)
-
+                    while data:
+                        stream.write(data)
+                        data = play_target_file.readframes(1024)
+                        
         except Exception as e:
-            st.error(f"音声再生中にエラーが発生しました: {str(e)}")
-            # Streamlitの代替音声再生機能を使用
-            st.audio(audio_output_file_path, format='audio/wav')
+            # PyAudioでの再生が失敗した場合
+            audio_device_available = False
             
         finally:
-            # リソースの適切な解放
+            # PyAudioリソースの解放
             if stream is not None:
                 try:
                     stream.stop_stream()
@@ -141,13 +151,18 @@ def play_wav(audio_output_file_path, speed=1.0):
                 except:
                     pass
         
+        # PyAudioが使用できない場合はStreamlitの音声プレイヤーを使用
+        if not audio_device_available:
+            st.info("音声デバイスが検出されなかったため、ブラウザの音声プレイヤーを使用します。")
+            st.audio(audio_output_file_path, format='audio/wav')
+        
     except Exception as e:
         st.error(f"音声ファイルの処理中にエラーが発生しました: {str(e)}")
-        # エラーが発生した場合でもStreamlitの音声プレイヤーで再生を試行
+        # 最終的な代替手段としてStreamlitの音声プレイヤーを使用
         try:
             st.audio(audio_output_file_path, format='audio/wav')
-        except:
-            st.error("音声の再生ができませんでした。")
+        except Exception as fallback_error:
+            st.error(f"音声の再生ができませんでした: {str(fallback_error)}")
     
     finally:
         # LLMからの回答の音声ファイルを削除
